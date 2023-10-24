@@ -5,13 +5,14 @@ buttons_held=0
 selected_button=0
 button_stage=0 --COUNT BUTTON PRESSES WHEN BUTTON HELD
 button_count=0
+function_button=0
 
 buttons={}
 
 led_clocks={} --STORE CLOCKS
-clocks={} --STORE CLOCK INFO
 
-types={"clock","and","or","xor","not"}
+
+operators={"clock","and","or","xor","not"}
 
 
 function init()
@@ -25,14 +26,13 @@ function init()
       prev_state=0,
       inputs={},
       note=0,
+      outputs={},
+      time=0,
       }
     
-    clocks[i]={
-      time=0,
-      outputs={},
-      }
-  end
+  end  
   
+  --GET NORNS CLOCK AND ASSIGN TO BUTTON 17
   buttons[17].type=7
   buttons[17].inputs[1]=17
   led_clocks[17]=clock.run(blonk)
@@ -49,6 +49,7 @@ function grid_redraw_clock()
   end
 end
 
+--SYNCD NORNS CLOCK
 function blonk()
   while true do
     clock.sync(1)
@@ -63,56 +64,59 @@ function blonk()
   end
 end
 
+--UNSYNCD CLOCK
 function blink(clock_id)
   while true do
-    clock.sleep(clocks[clock_id].time)
+    clock.sleep(buttons[clock_id].time)
     
-    for k,v in pairs(clocks[clock_id].outputs) do
+    --update each button output
+    for k,v in pairs(buttons[clock_id].outputs) do
       
+      --store prev state
       buttons[v].prev_state=buttons[v].state
       
+      --if button is a clock flip its state
       if buttons[v].type==1 then
-        --if button is a clock flip its state
-        --print("clock "..v)
         buttons[v].state=flip(buttons[v].state)
       end
       
-      
-      
+      --assign inputs to local variables
       if next(buttons[v].inputs)~=nil then
-        if #buttons[v].inputs==2 then
-          local in1=buttons[buttons[v].inputs[1]].state
-          local in2=buttons[buttons[v].inputs[2]].state
-      
-          if buttons[v].type==2 then
-            buttons[v].state=in1 & in2
-          elseif buttons[v].type==3 then 
-            buttons[v].state=in1 | in2
-          elseif buttons[v].type==4 then 
-            buttons[v].state=in1 ~ in2
-          --elseif buttons[v].type==6 then
-            --buttons[v].inputs[3]=(buttons[v].inputs[3]+1)%(buttons[v].inputs[2]-16)
-            --print("mod "..buttons[v].inputs[2])
-          end
-        elseif #buttons[v].inputs==1 then
-          local in1=buttons[buttons[v].inputs[1]].state
-          if buttons[v].type==5 then
+        local in1=0
+        local in2=0
+        if #buttons[v].inputs==1 then
+          in1=buttons[buttons[v].inputs[1]].state
+        elseif #buttons[v].inputs==2 then
+          in1=buttons[buttons[v].inputs[1]].state
+          in2=buttons[buttons[v].inputs[2]].state
+        end
+        
+        --bitwise operators
+        if buttons[v].type==2 then
+          buttons[v].state=in1 & in2
+        elseif buttons[v].type==3 then 
+          buttons[v].state=in1 | in2
+        elseif buttons[v].type==4 then 
+          buttons[v].state=in1 ~ in2
+        elseif buttons[v].type==5 then
             --print("in1 "..in1)
             buttons[v].state=flip(in1)
-          end
+        --elseif buttons[v].type==6 then
+          --buttons[v].inputs[3]=(buttons[v].inputs[3]+1)%(buttons[v].inputs[2]-16)
+          --print("mod "..buttons[v].inputs[2])
         end 
         
       end
     
+    --play note if state changed from 0 to 1
     if get_change(buttons[v].prev_state,buttons[v].state)==1 then
           play_note(v)
     end
       
     end
     
-    
-    
     grid_dirty=true
+    
   end
 end
 
@@ -147,7 +151,7 @@ function get_change(prev,state)
 end
 
 function play_note(x)
-  print("play "..x)
+  --print("play "..x)
   m:note_on(buttons[x].note,100,1)
 end
 
@@ -165,9 +169,44 @@ function remove_dup(t)
   return res
 end
 
+function reset_button(x)
+  buttons[x]={
+      type=0,
+      state=0,
+      prev_state=0,
+      inputs={},
+      note=0,
+      outputs={},
+      time=0,
+      }
+end
+
+function add_clock(x)
+  buttons[x].time=math.random(100)/100
+  table.insert(buttons[x].inputs,x)
+  table.insert(buttons[x].outputs,x)
+  led_clocks[x]=clock.run(blink,x)
+end
+
+function add_op(x,y,s)
+  local in1=get_button_number(x,y)
+    --ADD INPUTS
+    table.insert(buttons[s].inputs,in1)
+    
+    for k,v in pairs (buttons[in1].inputs) do
+          table.insert(buttons[v].outputs,s)
+          buttons[v].outputs=remove_dup(buttons[v].outputs)
+    end
+end
+
 function g.key(x,y,z)
   
-  
+  --GET FUNCTION BUTTON
+  if z==1 and y==8 then
+    function_button=x
+  elseif z==0 and y==8 then
+    function_button=0
+  end
   
   --GET NUMBER OF BUTTONS HELD
   if z==1 and buttons_held==0 then
@@ -195,10 +234,7 @@ function g.key(x,y,z)
     button_count=button_count+1
     buttons[selected_button].note=35+button_count
     --print(selected_button)
-  end  
-  
-  --SELECTED BUTTON OFF
-  if z==0 and buttons_held==0 then
+  elseif z==0 and buttons_held==0 then
     selected_button=0
     --print("button up")
   end
@@ -206,29 +242,20 @@ function g.key(x,y,z)
   --GET FUNCTION X=1 Y=1 IS CLOCK, X=2 Y=1 IS AND, X=3 AND Y=1 IS OR, X=4 AND Y=1 IS XOR
   if z==1 and buttons_held==2 and y==1 then
     buttons[selected_button].type=x
+    
+    --if clock set time, set input to button to feed thru to descendents
     if x==1 then
-      clocks[selected_button].time=math.random(100)/100
-      
-      table.insert(buttons[selected_button].inputs,selected_button)
-      table.insert(clocks[selected_button].outputs,selected_button)
-      led_clocks[selected_button]=clock.run(blink,selected_button)
-      --print(types[buttons[selected_button].type])
-      --tab.print(clocks[selected_button].outputs)
+      add_clock(selected_button)
     end
   end
   
   if button_stage>1 and z==1 then
-    local in1=get_button_number(x,y)
-    --ADD INPUTS
-    table.insert(buttons[selected_button].inputs,in1)
-    --table.insert(buttons[selected_button].triggers,buttons[in1].triggers)
-    for k,v in pairs (buttons[in1].inputs) do
-          table.insert(clocks[v].outputs,selected_button)
-          clocks[v].outputs=remove_dup(clocks[v].outputs)
-          --print("loop - k "..k.." v "..v)
-    end
+    add_op(x,y,selected_button)
   end
  
+  if function_button==1 and selected_button>0 then
+    reset_button(selected_button)
+  end
   
  
 end
